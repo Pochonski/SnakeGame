@@ -218,5 +218,5 @@ Este proyecto está bajo la Licencia MIT - mira el archivo [LICENSE](LICENSE) pa
 
 Si tienes preguntas o sugerencias:
 
-- Email: joseph@19102005@gmail.com
+- Email: joseph19102005@gmail.com
 - GitHub Issues: [Abre un issue aquí](https://github.com/tu-usuario/snake-game/issues)
