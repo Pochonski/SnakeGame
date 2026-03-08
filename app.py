@@ -10,16 +10,16 @@ _leaderboard_data = {}
 _leaderboard_lock = Lock()
 
 
-def _load_leaderboard() -> dict[str, int]:
+def _load_leaderboard():
     return _leaderboard_data.copy()
 
 
-def _save_leaderboard(entries: dict[str, int]) -> None:
+def _save_leaderboard(entries):
     global _leaderboard_data
     _leaderboard_data = entries.copy()
 
 
-def _sorted_entries(entries: dict[str, int]) -> list[dict[str, int]]:
+def _sorted_entries(entries):
     return [
         {"name": name, "score": score}
         for name, score in sorted(entries.items(), key=lambda item: item[1], reverse=True)
@@ -27,7 +27,7 @@ def _sorted_entries(entries: dict[str, int]) -> list[dict[str, int]]:
 
 
 @app.route("/")
-def index() -> str:
+def index():
     return render_template("index.html")
 
 
@@ -65,11 +65,6 @@ def submit_score():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=True)
-
-
-
-
-
 
 
 
