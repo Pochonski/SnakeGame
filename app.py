@@ -1,6 +1,5 @@
 import json
 from threading import Lock
-from typing import Dict, List
 
 from flask import Flask, jsonify, render_template, request
 
@@ -11,16 +10,16 @@ _leaderboard_data = {}
 _leaderboard_lock = Lock()
 
 
-def _load_leaderboard() -> Dict[str, int]:
+def _load_leaderboard() -> dict[str, int]:
     return _leaderboard_data.copy()
 
 
-def _save_leaderboard(entries: Dict[str, int]) -> None:
+def _save_leaderboard(entries: dict[str, int]) -> None:
     global _leaderboard_data
     _leaderboard_data = entries.copy()
 
 
-def _sorted_entries(entries: Dict[str, int]) -> List[Dict[str, int]]:
+def _sorted_entries(entries: dict[str, int]) -> list[dict[str, int]]:
     return [
         {"name": name, "score": score}
         for name, score in sorted(entries.items(), key=lambda item: item[1], reverse=True)
