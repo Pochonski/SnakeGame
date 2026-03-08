@@ -1,32 +1,22 @@
 import json
-from pathlib import Path
 from threading import Lock
 
 from flask import Flask, jsonify, render_template, request
 
 app = Flask(__name__)
 
-DATA_FILE = Path("leaderboard.json")
+# Almacenamiento en memoria para Vercel (no permite escritura de archivos)
+_leaderboard_data = {}
 _leaderboard_lock = Lock()
 
 
 def _load_leaderboard() -> dict[str, int]:
-    if not DATA_FILE.exists():
-        return {}
-
-    try:
-        data = json.loads(DATA_FILE.read_text(encoding="utf-8"))
-        if isinstance(data, dict):
-            return {str(name): int(score) for name, score in data.items()}
-    except (json.JSONDecodeError, ValueError):
-        pass
-
-    return {}
+    return _leaderboard_data.copy()
 
 
 def _save_leaderboard(entries: dict[str, int]) -> None:
-    with DATA_FILE.open("w", encoding="utf-8") as fp:
-        json.dump(entries, fp, ensure_ascii=False, indent=2)
+    global _leaderboard_data
+    _leaderboard_data = entries.copy()
 
 
 def _sorted_entries(entries: dict[str, int]) -> list[dict[str, int]]:
