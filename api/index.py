@@ -28,7 +28,7 @@ def _sorted_entries(entries: Dict[str, int]) -> List[Dict[str, int]]:
 
 
 @app.route("/")
-def index() -> str:
+def index():
     return render_template("index.html")
 
 
@@ -64,39 +64,6 @@ def submit_score():
     return jsonify({"status": "ok", "entries": entries})
 
 
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-    
+# Handler para Vercel
+def handler(environ, start_response):
+    return app(environ, start_response)
