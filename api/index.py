@@ -14,8 +14,8 @@ app = Flask(__name__,
             static_folder='../static')
 CORS(app)
 
-# Path to leaderboard file
-LEADERBOARD_FILE = '../leaderboard.json'
+# Path to leaderboard file - use /tmp for Vercel
+LEADERBOARD_FILE = '/tmp/leaderboard.json'
 
 def load_leaderboard():
     """Load leaderboard from JSON file"""
@@ -50,40 +50,57 @@ def static_files(filename):
 def get_leaderboard():
     """Get the current leaderboard"""
     leaderboard = load_leaderboard()
-    return jsonify(leaderboard)
+    return jsonify({'entries': leaderboard})
 
-@app.route('/api/leaderboard', methods=['POST'])
-def update_leaderboard():
-    """Update the leaderboard with a new score"""
+@app.route('/api/score', methods=['POST'])
+def submit_score():
+    """Submit a new score (matches the original app.py API)"""
     try:
         data = request.get_json()
-        name = data.get('name', 'Anonymous')
+        name = str(data.get('name', '')).strip()
         score = data.get('score', 0)
+        
+        if not name:
+            return jsonify({"error": "El nombre es obligatorio."}), 400
+            
+        try:
+            score_value = max(0, int(score))
+        except (TypeError, ValueError):
+            return jsonify({"error": "La puntuación debe ser numérica."}), 400
         
         # Load current leaderboard
         leaderboard = load_leaderboard()
         
-        # Add new score
-        new_entry = {
-            'name': name,
-            'score': score,
-            'date': json.dumps({'$date': {'$numberLong': str(int(__import__('time').time() * 1000))}})
-        }
+        # Update if it's a better score
+        current_best = 0
+        for entry in leaderboard:
+            if entry.get('name') == name:
+                current_best = entry.get('score', 0)
+                break
         
-        leaderboard.append(new_entry)
-        
-        # Sort by score (descending) and keep top 10
-        leaderboard.sort(key=lambda x: x['score'], reverse=True)
-        leaderboard = leaderboard[:10]
-        
-        # Save updated leaderboard
-        if save_leaderboard(leaderboard):
-            return jsonify({'success': True, 'leaderboard': leaderboard})
-        else:
-            return jsonify({'success': False, 'error': 'Failed to save leaderboard'}), 500
+        if score_value > current_best:
+            # Remove existing entry for this name
+            leaderboard = [entry for entry in leaderboard if entry.get('name') != name]
             
+            # Add new entry
+            new_entry = {
+                'name': name,
+                'score': score_value,
+                'date': json.dumps({'$date': {'$numberLong': str(int(__import__('time').time() * 1000))}})
+            }
+            leaderboard.append(new_entry)
+            
+            # Sort and keep top 10
+            leaderboard.sort(key=lambda x: x['score'], reverse=True)
+            leaderboard = leaderboard[:10]
+            
+            if not save_leaderboard(leaderboard):
+                return jsonify({"error": "Failed to save leaderboard"}), 500
+        
+        return jsonify({"success": True})
+        
     except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 400
+        return jsonify({"error": str(e)}), 400
 
 @app.route('/api/health', methods=['GET'])
 def health_check():
@@ -91,9 +108,9 @@ def health_check():
     return jsonify({'status': 'healthy', 'message': 'Snake Game API is running'})
 
 # Vercel serverless function handler
-def handler(request):
+def handler(environ, start_response):
     """Main handler for Vercel serverless functions"""
-    return app(request.environ, lambda status, headers: None)
+    return app(environ, start_response)
 
 if __name__ == '__main__':
     # For local development
