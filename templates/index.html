@@ -1,0 +1,1066 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Snake Game</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+</head>
+<body>
+    <div class="container">
+        <h1>Snake Game</h1>
+        <div class="scoreboard">
+            <span>Jugador:</span>
+            <span id="playerNameDisplay">-</span>
+            <span>Puntuación:</span>
+            <span id="score">0</span>
+            <span>Record personal:</span>
+            <span id="personalBest">0</span>
+        </div>
+        <button id="changeNameBtn" class="secondary-btn">Cambiar nombre</button>
+        <button id="autoplayToggleBtn" class="secondary-btn">Auto-Play: Off</button>
+        <canvas id="gameCanvas" width="480" height="480"></canvas>
+        <div id="gameOver" class="hidden">
+            <p>Game Over</p>
+            <button id="restartBtn">Reiniciar</button>
+        </div>
+        <div class="leaderboard">
+            <h2>Clasificaciones</h2>
+            <p id="leaderboardPlaceholder" class="leaderboard-placeholder hidden">Todavía no hay puntuaciones.</p>
+            <ul id="leaderboardList" class="leaderboard-list"></ul>
+        </div>
+    </div>
+
+    <div id="nameModal" class="modal hidden">
+        <div class="modal-content">
+            <h2>Ingresa tu nombre</h2>
+            <form id="nameForm">
+                <input type="text" id="playerNameInput" placeholder="Ej. Ana" maxlength="20" autocomplete="off" required />
+                <button type="submit">Comenzar</button>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const scoreEl = document.getElementById('score');
+        const personalBestEl = document.getElementById('personalBest');
+        const playerNameDisplay = document.getElementById('playerNameDisplay');
+        const gameOverEl = document.getElementById('gameOver');
+        const restartBtn = document.getElementById('restartBtn');
+        const changeNameBtn = document.getElementById('changeNameBtn');
+        const autoplayToggleBtn = document.getElementById('autoplayToggleBtn');
+        const nameModal = document.getElementById('nameModal');
+        const nameForm = document.getElementById('nameForm');
+        const playerNameInput = document.getElementById('playerNameInput');
+        const leaderboardList = document.getElementById('leaderboardList');
+        const leaderboardPlaceholder = document.getElementById('leaderboardPlaceholder');
+
+        const gridSize = 24;
+        const tileCount = canvas.width / gridSize;
+
+        let snake;
+        let direction;
+        let nextDirection;
+        let food;
+        let score;
+        let playerName = localStorage.getItem('snakePlayerName') || '';
+        let personalBest = 0;
+        let leaderboardEntries = [];
+        let leaderboardInterval;
+        let gameInterval;
+        let gameRunning = false;
+        let autoPlay = false;
+        let touchStartX = null;
+        let touchStartY = null;
+        const gameOverMessageEl = gameOverEl.querySelector('p');
+        const defaultGameOverText = gameOverMessageEl.textContent;
+        const directionVectors = [
+            { x: 1, y: 0 },
+            { x: -1, y: 0 },
+            { x: 0, y: 1 },
+            { x: 0, y: -1 }
+        ];
+        const MAX_SEARCH_NODES = 3000;
+        const SEARCH_CHUNK_SIZE = 200;
+        let pathSearchState = null;
+        let plannedDirections = [];
+
+        initializePlayer();
+        startLeaderboardPolling();
+
+        function initGame() {
+            snake = [
+                { x: 5, y: 10 },
+                { x: 4, y: 10 },
+                { x: 3, y: 10 }
+            ];
+            direction = { x: 1, y: 0 };
+            nextDirection = { x: 1, y: 0 };
+            score = 0;
+            scoreEl.textContent = score;
+            personalBestEl.textContent = personalBest;
+            placeFood();
+            setAutoPlay(false);
+            clearPlannedDirections();
+            gameRunning = true;
+            gameOverEl.classList.add('hidden');
+            clearInterval(gameInterval);
+            gameInterval = setInterval(gameLoop, 120);
+        }
+
+        function placeFood() {
+            let valid = false;
+            while (!valid) {
+                const newFood = {
+                    x: Math.floor(Math.random() * tileCount),
+                    y: Math.floor(Math.random() * tileCount)
+                };
+                valid = !snake.some(segment => segment.x === newFood.x && segment.y === newFood.y);
+                if (valid) {
+                    food = newFood;
+                    resetPathSearchState();
+                    clearPlannedDirections();
+                }
+            }
+        }
+
+        function gameLoop() {
+            if (!gameRunning) return;
+            if (autoPlay) {
+                const autoDirection = getAutoDirection();
+                if (autoDirection) {
+                    nextDirection = autoDirection;
+                } else {
+                    setAutoPlay(false);
+                }
+            }
+            update();
+            draw();
+        }
+
+        function update() {
+            direction = nextDirection;
+            const newHead = {
+                x: snake[0].x + direction.x,
+                y: snake[0].y + direction.y
+            };
+
+            if (isCollision(newHead)) {
+                endGame('¡Has chocado!');
+                return;
+            }
+
+            snake.unshift(newHead);
+            const ateFood = newHead.x === food.x && newHead.y === food.y;
+
+            if (ateFood) {
+                score += 10;
+                scoreEl.textContent = score;
+                if (score > personalBest) {
+                    personalBest = score;
+                    personalBestEl.textContent = personalBest;
+                }
+                placeFood();
+            } else {
+                snake.pop();
+            }
+        }
+
+        function isCollision(head) {
+            if (
+                head.x < 0 ||
+                head.y < 0 ||
+                head.x >= tileCount ||
+                head.y >= tileCount
+            ) {
+                return true;
+            }
+
+            for (let i = 1; i < snake.length; i++) {
+                if (snake[i].x === head.x && snake[i].y === head.y) {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        function draw() {
+            drawBoard();
+
+            // Draw food as red circle
+            const foodX = food.x * gridSize + gridSize / 2;
+            const foodY = food.y * gridSize + gridSize / 2;
+            ctx.fillStyle = '#ef4444';
+            ctx.beginPath();
+            ctx.arc(foodX, foodY, gridSize / 2 - 2, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Draw snake
+            snake.forEach((segment, index) => {
+                const x = segment.x * gridSize;
+                const y = segment.y * gridSize;
+                ctx.fillStyle = '#2563eb';
+                ctx.fillRect(x, y, gridSize - 2, gridSize - 2);
+
+                if (index === 0) {
+                    drawEyes(x, y);
+                }
+            });
+
+            if (autoPlay) {
+                ctx.fillStyle = '#facc15';
+                ctx.font = 'bold 18px Arial';
+                ctx.textBaseline = 'top';
+                ctx.fillText('🧠 Auto-Play Inteligente ON', 10, 10);
+            }
+        }
+
+        function drawBoard() {
+            const lightGreen = '#15803d';
+            const darkGreen = '#166534';
+
+            for (let y = 0; y < tileCount; y++) {
+                for (let x = 0; x < tileCount; x++) {
+                    ctx.fillStyle = (x + y) % 2 === 0 ? lightGreen : darkGreen;
+                    ctx.fillRect(x * gridSize, y * gridSize, gridSize, gridSize);
+                }
+            }
+        }
+
+        function drawEyes(x, y) {
+            const eyeRadius = gridSize * 0.12;
+            const offsetX = gridSize * 0.25;
+            const offsetY = gridSize * 0.25;
+
+            ctx.fillStyle = '#ffffff';
+            ctx.beginPath();
+            ctx.arc(x + offsetX, y + offsetY, eyeRadius, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.beginPath();
+            ctx.arc(x + gridSize - offsetX, y + offsetY, eyeRadius, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.fillStyle = '#0f172a';
+            const pupilRadius = eyeRadius / 1.5;
+            ctx.beginPath();
+            ctx.arc(x + offsetX, y + offsetY, pupilRadius, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.beginPath();
+            ctx.arc(x + gridSize - offsetX, y + offsetY, pupilRadius, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        function endGame(message = defaultGameOverText) {
+            gameRunning = false;
+            clearInterval(gameInterval);
+            setAutoPlay(false);
+            gameOverMessageEl.textContent = message;
+            gameOverEl.classList.remove('hidden');
+        }
+
+        window.addEventListener('keydown', event => {
+            if (event.ctrlKey && (event.key === 'k' || event.key === 'K')) {
+                event.preventDefault();
+                setAutoPlay(!autoPlay);
+                return;
+            }
+            if (autoPlay || !gameRunning) {
+                return;
+            }
+            const { key } = event;
+            switch (key) {
+                case 'ArrowUp':
+                    if (direction.y === 1) break;
+                    nextDirection = { x: 0, y: -1 };
+                    break;
+                case 'ArrowDown':
+                    if (direction.y === -1) break;
+                    nextDirection = { x: 0, y: 1 };
+                    break;
+                case 'ArrowLeft':
+                    if (direction.x === 1) break;
+                    nextDirection = { x: -1, y: 0 };
+                    break;
+                case 'ArrowRight':
+                    if (direction.x === -1) break;
+                    nextDirection = { x: 1, y: 0 };
+                    break;
+            }
+        });
+
+        restartBtn.addEventListener('click', initGame);
+        changeNameBtn.addEventListener('click', () => {
+            playerNameInput.value = playerName;
+            showNameModal();
+        });
+        if (autoplayToggleBtn) {
+            autoplayToggleBtn.addEventListener('click', () => {
+                setAutoPlay(!autoPlay);
+            });
+        }
+        nameForm.addEventListener('submit', event => {
+            event.preventDefault();
+            const value = playerNameInput.value.trim();
+            if (!value) {
+                playerNameInput.focus();
+                return;
+            }
+
+            playerName = value;
+            localStorage.setItem('snakePlayerName', playerName);
+            playerNameDisplay.textContent = playerName;
+            personalBest = 0;
+            personalBestEl.textContent = personalBest;
+            hideNameModal();
+            fetchLeaderboard();
+            startLeaderboardPolling();
+            if (!gameRunning) {
+                initGame();
+            }
+        });
+
+        document.addEventListener('touchstart', handleTouchStart, { passive: false });
+        document.addEventListener('touchend', handleTouchEnd, { passive: false });
+        document.addEventListener('touchmove', disableScroll, { passive: false });
+
+        initGame();
+        fetchLeaderboard();
+
+        function handleTouchStart(event) {
+            if (autoPlay) {
+                return;
+            }
+            const interactiveTarget = event.target.closest('button, a, input, textarea, .modal');
+            if (interactiveTarget) {
+                touchStartX = null;
+                touchStartY = null;
+                return;
+            }
+
+            event.preventDefault();
+            const touch = event.touches[0];
+            touchStartX = touch.clientX;
+            touchStartY = touch.clientY;
+        }
+
+        function handleTouchEnd(event) {
+            if (autoPlay) {
+                touchStartX = null;
+                touchStartY = null;
+                return;
+            }
+            const interactiveTarget = event.target.closest('button, a, input, textarea, .modal');
+            if (interactiveTarget) {
+                touchStartX = null;
+                touchStartY = null;
+                return;
+            }
+
+            if (touchStartX === null || touchStartY === null) {
+                return;
+            }
+
+            event.preventDefault();
+            const touch = event.changedTouches[0];
+            const deltaX = touch.clientX - touchStartX;
+            const deltaY = touch.clientY - touchStartY;
+
+            const absDeltaX = Math.abs(deltaX);
+            const absDeltaY = Math.abs(deltaY);
+
+            if (Math.max(absDeltaX, absDeltaY) < 10) {
+                touchStartX = null;
+                touchStartY = null;
+                return;
+            }
+
+            if (absDeltaX > absDeltaY) {
+                if (deltaX > 0 && direction.x !== -1) {
+                    nextDirection = { x: 1, y: 0 };
+                } else if (deltaX < 0 && direction.x !== 1) {
+                    nextDirection = { x: -1, y: 0 };
+                }
+            } else {
+                if (deltaY > 0 && direction.y !== -1) {
+                    nextDirection = { x: 0, y: 1 };
+                } else if (deltaY < 0 && direction.y !== 1) {
+                    nextDirection = { x: 0, y: -1 };
+                }
+            }
+
+            touchStartX = null;
+            touchStartY = null;
+        }
+
+        function disableScroll(event) {
+            const interactiveTarget = event.target.closest('button, a, input, textarea, .modal');
+            if (interactiveTarget) {
+                return;
+            }
+
+            event.preventDefault();
+        }
+
+        function initializePlayer() {
+            if (playerName) {
+                playerNameDisplay.textContent = playerName;
+                hideNameModal();
+            } else {
+                showNameModal();
+            }
+        }
+
+        function showNameModal() {
+            nameModal.classList.remove('hidden');
+            setTimeout(() => playerNameInput.focus(), 50);
+        }
+
+        function hideNameModal() {
+            nameModal.classList.add('hidden');
+        }
+
+        async function fetchLeaderboard() {
+            try {
+                const response = await fetch('/api/leaderboard');
+                if (!response.ok) {
+                    throw new Error('Error al cargar clasificaciones');
+                }
+                const data = await response.json();
+                leaderboardEntries = Array.isArray(data.entries) ? data.entries : [];
+            } catch (error) {
+                console.error(error);
+                leaderboardEntries = [];
+            } finally {
+                updateLeaderboardView();
+            }
+        }
+
+        async function submitScore(newScore) {
+            if (!playerName) {
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/score', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: playerName, score: newScore })
+                });
+
+                if (!response.ok) {
+                    throw new Error('No se pudo registrar la puntuación.');
+                }
+
+                const data = await response.json();
+                leaderboardEntries = Array.isArray(data.entries) ? data.entries : leaderboardEntries;
+            } catch (error) {
+                console.error(error);
+            } finally {
+                updateLeaderboardView();
+            }
+        }
+
+        function updateLeaderboardView() {
+            leaderboardList.innerHTML = '';
+
+            if (!leaderboardEntries.length) {
+                leaderboardPlaceholder.classList.remove('hidden');
+                if (playerName) {
+                    personalBest = 0;
+                    personalBestEl.textContent = personalBest;
+                }
+                return;
+            }
+
+            leaderboardPlaceholder.classList.add('hidden');
+
+            const normalizedName = playerName.toLowerCase();
+            let personalEntry = null;
+
+            leaderboardEntries.forEach((entry, index) => {
+                const li = document.createElement('li');
+                if (playerName && entry.name.toLowerCase() === normalizedName) {
+                    li.classList.add('self');
+                    personalEntry = entry;
+                }
+
+                li.innerHTML = `<span>${index + 1}. ${entry.name}</span><span>${entry.score}</span>`;
+                leaderboardList.appendChild(li);
+            });
+
+            if (playerName) {
+                personalBest = personalEntry ? personalEntry.score : personalBest;
+                personalBestEl.textContent = personalBest;
+            }
+        }
+
+        function startLeaderboardPolling() {
+            if (leaderboardInterval) {
+                clearInterval(leaderboardInterval);
+            }
+
+            if (!playerName) {
+                return;
+            }
+
+            leaderboardInterval = setInterval(fetchLeaderboard, 10000);
+        }
+
+        function setAutoPlay(value) {
+            if (value && (!gameRunning || snake.length === 0)) {
+                return;
+            }
+            autoPlay = value;
+            resetPathSearchState();
+            clearPlannedDirections();
+            
+            // Inicializar plannedDirections si no existe
+            if (!window.plannedDirections) {
+                window.plannedDirections = [];
+            }
+            // Actualizar estado del botón de autoplay en la UI
+            try { updateAutoplayButton(); } catch (e) { /* no-op */ }
+        }
+
+        function updateAutoplayButton() {
+            if (!autoplayToggleBtn) return;
+            autoplayToggleBtn.textContent = autoPlay ? 'Auto-Play: ON' : 'Auto-Play: Off';
+            if (autoPlay) {
+                autoplayToggleBtn.classList.add('active');
+            } else {
+                autoplayToggleBtn.classList.remove('active');
+            }
+        }
+
+        // Función principal para el modo autoplay
+        function getAutoDirection() {
+            // Si ya hay direcciones planificadas, usarlas
+            if (window.plannedDirections && window.plannedDirections.length > 0) {
+                return window.plannedDirections.shift();
+            }
+
+            // 1. Intentar encontrar un camino a la comida (ignorando la cola)
+            let pathToFood = findPath(snake, food, true);
+            
+            // 2. Si no se encuentra un camino, intentar sin ignorar la cola
+            if (!pathToFood || pathToFood.length <= 1) {
+                pathToFood = findPath(snake, food, false);
+            }
+
+            // 3. Si encontramos un camino, planificar los movimientos
+            if (pathToFood && pathToFood.length > 1) {
+                // Calcular las direcciones necesarias para seguir el camino
+                window.plannedDirections = [];
+                for (let i = 0; i < pathToFood.length - 1; i++) {
+                    const current = pathToFood[i];
+                    const next = pathToFood[i + 1];
+                    window.plannedDirections.push({
+                        x: next.x - current.x,
+                        y: next.y - current.y
+                    });
+                }
+                
+                if (window.plannedDirections.length > 0) {
+                    return window.plannedDirections.shift();
+                }
+            }
+
+            // 4. Si no hay un camino claro, usar una estrategia de búsqueda segura
+            const safeMove = findSafeMove();
+            if (safeMove) return safeMove;
+
+            // 5. Si no hay movimientos seguros, intentar seguir el perímetro
+            const perimeterMove = followPerimeter();
+            if (perimeterMove) return perimeterMove;
+
+            // 6. Como último recurso, elegir una dirección que no cause colisión inmediata
+            const possibleMoves = [
+                { x: 1, y: 0 },
+                { x: -1, y: 0 },
+                { x: 0, y: 1 },
+                { x: 0, y: -1 }
+            ].filter(move => {
+                const newX = snake[0].x + move.x;
+                const newY = snake[0].y + move.y;
+                return !isCollision({ x: newX, y: newY });
+            });
+
+            // 7. Si no hay movimientos seguros, mantener la dirección actual
+            return possibleMoves.length > 0
+                ? possibleMoves[Math.floor(Math.random() * possibleMoves.length)]
+                : direction;
+        }
+
+        function followPerimeter() {
+            const head = snake[0];
+            
+            // Si estamos en un borde, seguirlo
+            if (head.x === 0 && head.y > 0) return { x: 0, y: -1 }; // Borde izquierdo, subir
+            if (head.y === 0 && head.x < tileCount - 1) return { x: 1, y: 0 }; // Borde superior, derecha
+            if (head.x === tileCount - 1 && head.y < tileCount - 1) return { x: 0, y: 1 }; // Borde derecho, bajar
+            if (head.y === tileCount - 1 && head.x > 0) return { x: -1, y: 0 }; // Borde inferior, izquierda
+            
+            // Si estamos en una esquina, movernos hacia el centro
+            const centerX = Math.floor(tileCount / 2);
+            const centerY = Math.floor(tileCount / 2);
+            const dx = Math.sign(centerX - head.x);
+            const dy = Math.sign(centerY - head.y);
+            
+            // Intentar primero en la dirección x, luego en y
+            if (dx !== 0) {
+                const newX = head.x + dx;
+                if (!isCollision({ x: newX, y: head.y })) {
+                    return { x: dx, y: 0 };
+                }
+            }
+            
+            if (dy !== 0) {
+                const newY = head.y + dy;
+                if (!isCollision({ x: head.x, y: newY })) {
+                    return { x: 0, y: dy };
+                }
+            }
+            
+            return null;
+        }
+
+        function findSafeMove() {
+            const head = snake[0];
+            const possibleMoves = [
+                { x: 1, y: 0 },
+                { x: -1, y: 0 },
+                { x: 0, y: 1 },
+                { x: 0, y: -1 }
+            ];
+
+            // Ordenar movimientos por distancia a la comida (más cercano primero)
+            possibleMoves.sort((a, b) => {
+                const distA = Math.abs((head.x + a.x - food.x) ** 2 + (head.y + a.y - food.y) ** 2);
+                const distB = Math.abs((head.x + b.x - food.x) ** 2 + (head.y + b.y - food.y) ** 2);
+                return distA - distB;
+            });
+
+            // Encontrar el primer movimiento seguro
+            for (const move of possibleMoves) {
+                const newX = head.x + move.x;
+                const newY = head.y + move.y;
+                
+                // Verificar colisión con los bordes
+                if (newX < 0 || newY < 0 || newX >= tileCount || newY >= tileCount) {
+                    continue;
+                }
+                
+                // Verificar si choca con el cuerpo
+                let collision = false;
+                for (let i = 0; i < snake.length - 1; i++) {
+                    if (snake[i].x === newX && snake[i].y === newY) {
+                        collision = true;
+                        break;
+                    }
+                }
+                
+                if (!collision) {
+                    return move;
+                }
+            }
+            
+            return null;
+        }
+
+        function handleVictory() {
+            endGame('Pantalla completada ');
+        }
+
+        function simulateMove(state, newHead, willGrow) {
+            const cloned = state.map(segment => ({ x: segment.x, y: segment.y }));
+            cloned.unshift({ x: newHead.x, y: newHead.y });
+            if (!willGrow) {
+                cloned.pop();
+            }
+            return cloned;
+        }
+
+        function findSafePathToFoodStateful() {
+            if (!autoPlay) {
+                resetPathSearchState();
+                return null;
+            }
+
+            if (!pathSearchState || searchStateNeedsReset(pathSearchState, snake, food)) {
+                pathSearchState = createSearchState(snake, food);
+            }
+
+            processSearchChunk(pathSearchState, SEARCH_CHUNK_SIZE);
+
+            if (pathSearchState && pathSearchState.result) {
+                const resultVectors = [...pathSearchState.result];
+                resetPathSearchState();
+                return resultVectors;
+            }
+
+            if (pathSearchState && pathSearchState.exhausted) {
+                resetPathSearchState();
+            }
+
+            return null;
+        }
+
+        function cloneSnake(source) {
+            return source.map(segment => ({ x: segment.x, y: segment.y }));
+        }
+
+        function buildPositionsFromPath(initialSnake, pathVectors) {
+            const positions = cloneSnake(initialSnake);
+            let currentHead = positions[0];
+            const route = [currentHead];
+
+            for (const vector of pathVectors) {
+                currentHead = {
+                    x: currentHead.x + vector.x,
+                    y: currentHead.y + vector.y
+                };
+                route.push(currentHead);
+            }
+
+            return route;
+        }
+
+        function serializeSnake(state) {
+            return state.map(segment => serializePosition(segment)).join('|');
+        }
+
+        function createSearchState(snakeState, foodState) {
+            return {
+                startSignature: serializeSnake(snakeState),
+                food: { x: foodState.x, y: foodState.y },
+                queue: [{ snake: cloneSnake(snakeState), path: [] }],
+                visited: new Set([serializeSnake(snakeState)]),
+                nodesProcessed: 0,
+                maxNodes: MAX_SEARCH_NODES,
+                chunkSize: SEARCH_CHUNK_SIZE,
+                exhausted: false,
+                result: null,
+                scheduled: false,
+                canceled: false
+            };
+        }
+
+        function searchStateNeedsReset(state, currentSnake, currentFood) {
+            if (!state) {
+                return true;
+            }
+            if (state.food.x !== currentFood.x || state.food.y !== currentFood.y) {
+                return true;
+            }
+            return serializeSnake(currentSnake) !== state.startSignature;
+        }
+
+        function processSearchChunk(state, budget) {
+            if (!state || state.result || state.exhausted) {
+                return;
+            }
+
+            while (budget > 0 && state.queue.length && !state.result) {
+                const { snake: currentSnake, path } = state.queue.shift();
+                state.nodesProcessed += 1;
+                if (state.nodesProcessed > state.maxNodes) {
+                    state.exhausted = true;
+                    break;
+                }
+
+                for (const vector of directionVectors) {
+                    const nextHead = {
+                        x: currentSnake[0].x + vector.x,
+                        y: currentSnake[0].y + vector.y
+                    };
+
+                    if (
+                        nextHead.x < 0 ||
+                        nextHead.y < 0 ||
+                        nextHead.x >= tileCount ||
+                        nextHead.y >= tileCount
+                    ) {
+                        continue;
+                    }
+
+                    let collision = false;
+                    for (let i = 0; i < currentSnake.length - 1; i++) {
+                        if (currentSnake[i].x === nextHead.x && currentSnake[i].y === nextHead.y) {
+                            collision = true;
+                            break;
+                        }
+                    }
+
+                    const willGrow = nextHead.x === food.x && nextHead.y === food.y;
+                    if (!willGrow) {
+                        const tail = currentSnake[currentSnake.length - 1];
+                        if (tail.x === nextHead.x && tail.y === nextHead.y) {
+                            collision = false;
+                        }
+                    }
+
+                    if (collision) {
+                        continue;
+                    }
+
+                    const nextSnake = cloneSnake(currentSnake);
+                    nextSnake.unshift(nextHead);
+                    if (!willGrow) {
+                        nextSnake.pop();
+                    }
+
+                    const nextPath = [...path, vector];
+                    const tailAfterMove = nextSnake[nextSnake.length - 1];
+                    const tailEscape = findPath(nextSnake, tailAfterMove, true);
+                    if (!tailEscape) {
+                        continue;
+                    }
+
+                    if (willGrow) {
+                        state.result = [...nextPath];
+                        break;
+                    }
+
+                    const serialized = serializeSnake(nextSnake);
+                    if (state.visited.has(serialized)) {
+                        continue;
+                    }
+
+                    state.visited.add(serialized);
+                    state.queue.push({ snake: nextSnake, path: nextPath });
+                }
+
+                budget -= 1;
+
+                if (state.result || state.exhausted) {
+                    break;
+                }
+            }
+
+            if (!state.result && (!state.queue.length || state.nodesProcessed >= state.maxNodes)) {
+                state.exhausted = true;
+            }
+
+            if (state.result || state.exhausted || state.scheduled || state.canceled) {
+                return;
+            }
+
+            if (state.queue.length) {
+                state.scheduled = true;
+                setTimeout(() => {
+                    state.scheduled = false;
+                    if (state.canceled || state !== pathSearchState) {
+                        return;
+                    }
+                    processSearchChunk(state, state.chunkSize);
+                }, 0);
+            }
+        }
+
+        function resetPathSearchState() {
+            if (pathSearchState) {
+                pathSearchState.canceled = true;
+            }
+            pathSearchState = null;
+        }
+
+        function clearPlannedDirections() {
+            plannedDirections = [];
+        }
+
+        function chooseFallbackDirection() {
+            const head = snake[0];
+            const neighbors = getNeighbors(head);
+            let bestMove = null;
+            let bestScore = -Infinity;
+
+            for (const neighbor of neighbors) {
+                if (isCollision(neighbor)) {
+                    continue;
+                }
+
+                const willEat = neighbor.x === food.x && neighbor.y === food.y;
+                const simulatedSnake = simulateMove(snake, neighbor, willEat);
+                const simulatedTail = simulatedSnake[simulatedSnake.length - 1];
+                const tailPath = findPath(simulatedSnake, simulatedTail, true);
+                if (!tailPath) {
+                    continue;
+                }
+                const reachable = countReachableCells(neighbor, simulatedSnake);
+                const tailDistance = manhattanDistance(neighbor, simulatedTail);
+                const foodDistance = manhattanDistance(neighbor, food);
+
+                const score = reachable * 10 - tailDistance - foodDistance * 0.5;
+                if (score > bestScore) {
+                    bestScore = score;
+                    bestMove = {
+                        x: neighbor.x - head.x,
+                        y: neighbor.y - head.y
+                    };
+                }
+            }
+
+            return bestMove;
+        }
+
+        function countReachableCells(start, snakeState) {
+            const visited = new Set();
+            const queue = [start];
+            visited.add(serializePosition(start));
+
+            const obstacles = new Set();
+            for (let i = 1; i < snakeState.length; i++) {
+                obstacles.add(serializePosition(snakeState[i]));
+            }
+
+            while (queue.length) {
+                const current = queue.shift();
+                const neighbors = getNeighbors(current);
+                for (const neighbor of neighbors) {
+                    if (
+                        neighbor.x < 0 ||
+                        neighbor.y < 0 ||
+                        neighbor.x >= tileCount ||
+                        neighbor.y >= tileCount
+                    ) {
+                        continue;
+                    }
+                    const key = serializePosition(neighbor);
+                    if (visited.has(key) || obstacles.has(key)) {
+                        continue;
+                    }
+                    visited.add(key);
+                    queue.push(neighbor);
+                }
+            }
+
+            return visited.size;
+        }
+
+        function directionBetween(from, to) {
+            if (!to) {
+                return null;
+            }
+            return {
+                x: to.x - from.x,
+                y: to.y - from.y
+            };
+        }
+
+        function manhattanDistance(a, b) {
+            return Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
+        }
+
+        function findPath(currentSnake, target, ignoreTail = true) {
+            const head = currentSnake[0];
+            const queue = [{ ...head, priority: 0 }];
+            const visited = new Set([serializePosition(head)]);
+            const cameFrom = new Map();
+            const gScore = new Map();
+            const fScore = new Map();
+            
+            gScore.set(serializePosition(head), 0);
+            fScore.set(serializePosition(head), manhattanDistance(head, target));
+            
+            // Crear un conjunto de obstáculos
+            const obstacles = new Set();
+            // Solo considerar el cuerpo de la serpiente como obstáculo, excepto la cola si ignoreTail es true
+            const limit = ignoreTail ? currentSnake.length - 1 : currentSnake.length;
+            for (let i = 1; i < limit; i++) {
+                obstacles.add(serializePosition(currentSnake[i]));
+            }
+
+            while (queue.length > 0) {
+                // Ordenar la cola por prioridad (menor fScore primero)
+                queue.sort((a, b) => a.priority - b.priority);
+                const current = queue.shift();
+                const currentKey = serializePosition(current);
+                
+                // Si llegamos al objetivo, reconstruir y devolver el camino
+                if (current.x === target.x && current.y === target.y) {
+                    return reconstructPath(cameFrom, head, target);
+                }
+
+                // Obtener vecinos válidos
+                const neighbors = getNeighbors(current);
+                
+                for (const neighbor of neighbors) {
+                    // Verificar límites del tablero
+                    if (neighbor.x < 0 || neighbor.y < 0 || neighbor.x >= tileCount || neighbor.y >= tileCount) {
+                        continue;
+                    }
+                    
+                    const neighborKey = serializePosition(neighbor);
+                    
+                    // Si es un obstáculo (y no es el objetivo), saltar
+                    if (obstacles.has(neighborKey) && !(neighbor.x === target.x && neighbor.y === target.y)) {
+                        continue;
+                    }
+                    
+                    // Calcular el nuevo gScore
+                    const tentativeGScore = (gScore.get(currentKey) || 0) + 1;
+                    
+                    if (!gScore.has(neighborKey) || tentativeGScore < gScore.get(neighborKey)) {
+                        // Este es un mejor camino
+                        cameFrom.set(neighborKey, currentKey);
+                        gScore.set(neighborKey, tentativeGScore);
+                        const newFScore = tentativeGScore + manhattanDistance(neighbor, target);
+                        fScore.set(neighborKey, newFScore);
+                        
+                        if (!visited.has(neighborKey)) {
+                            visited.add(neighborKey);
+                            queue.push({ ...neighbor, priority: newFScore });
+                        } else {
+                            // Actualizar la prioridad en la cola
+                            const index = queue.findIndex(n => 
+                                n.x === neighbor.x && n.y === neighbor.y);
+                            if (index !== -1) {
+                                queue[index].priority = newFScore;
+                            }
+                        }
+                    }
+                }
+            }
+            
+            return null; // No se encontró un camino
+        }
+
+        function reconstructPath(cameFrom, start, target) {
+            const path = [target];
+            let currentKey = serializePosition(target);
+            const startKey = serializePosition(start);
+
+            while (currentKey !== startKey) {
+                const previousKey = cameFrom.get(currentKey);
+                if (!previousKey) {
+                    return null;
+                }
+                const [x, y] = previousKey.split(',').map(Number);
+                path.unshift({ x, y });
+                currentKey = previousKey;
+            }
+
+            return path;
+        }
+
+        function getNeighbors(position) {
+            return [
+                { x: position.x + 1, y: position.y },
+                { x: position.x - 1, y: position.y },
+                { x: position.x, y: position.y + 1 },
+                { x: position.x, y: position.y - 1 }
+            ];
+        }
+
+        function serializePosition(position) {
+            return `${position.x},${position.y}`;
+        }
+
+    </script>
+</body>
+</html>

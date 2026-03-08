@@ -1,0 +1,24 @@
+# Entorno virtual
+venv/
+.venv/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Editor config
+.vscode/
+.idea/
+
+# System files
+.DS_Store
+Thumbs.db
+
+# Entorno y secrets
+.env
+.env.*
+
+# Datos locales
+leaderboard.json
