@@ -202,7 +202,7 @@ Este proyecto está bajo la Licencia MIT - mira el archivo [LICENSE](LICENSE) pa
 
 ## 👨‍💻 Autor
 
-**Joseph** - _Desarrollador Full Stack_ - [GitHub](https://github.com/tu-usuario)
+**Joseph** - _Desarrollador Full Stack_ - [GitHub](https://github.com/pochonski)
 
 ## 🙏 Agradecimientos
 
@@ -218,5 +218,5 @@ Este proyecto está bajo la Licencia MIT - mira el archivo [LICENSE](LICENSE) pa
 
 Si tienes preguntas o sugerencias:
 
-- Email: joseph@example.com
+- Email: joseph@19102005@gmail.com
 - GitHub Issues: [Abre un issue aquí](https://github.com/tu-usuario/snake-game/issues)
